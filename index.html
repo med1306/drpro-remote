@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DR-Pro-Rack Remote Preview</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #18181b;
+      color: #f4f4f5;
+      font-family: Arial, Helvetica, sans-serif;
+    }
+    body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .panel {
+      width: min(100%, 430px);
+      background: linear-gradient(180deg, #7a7a74 0%, #53544f 100%);
+      border: 1px solid #5b5b56;
+      border-radius: 24px;
+      padding: 18px;
+      box-shadow: 0 18px 40px rgba(0,0,0,0.45);
+    }
+    .group {
+      background: rgba(24, 24, 27, 0.28);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 20px;
+      padding: 14px;
+      margin-bottom: 14px;
+    }
+    .group:last-child { margin-bottom: 0; }
+    .memory-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+    }
+    .transport-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+    .btn {
+      appearance: none;
+      border: 1px solid #4f4f46;
+      background: linear-gradient(180deg, #2d2e31 0%, #17181b 100%);
+      border-radius: 18px;
+      color: #fafafa;
+      min-height: 82px;
+      padding: 10px 8px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      font-size: 18px;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.08),
+        inset 0 -4px 10px rgba(0,0,0,0.35),
+        0 4px 10px rgba(0,0,0,0.25);
+      transition: transform 0.08s ease, border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+    }
+    .btn:active { transform: scale(0.98); }
+    .btn.active {
+      border-color: #bef264;
+      background: linear-gradient(180deg, #383a2d 0%, #1f2119 100%);
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.08),
+        inset 0 -4px 10px rgba(0,0,0,0.35),
+        0 0 0 2px rgba(190,242,100,0.25),
+        0 4px 10px rgba(0,0,0,0.25);
+    }
+    .btn.blackout.active {
+      border-color: #fca5a5;
+      background: linear-gradient(180deg, #452626 0%, #241414 100%);
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.08),
+        inset 0 -4px 10px rgba(0,0,0,0.35),
+        0 0 0 2px rgba(252,165,165,0.25),
+        0 4px 10px rgba(0,0,0,0.25);
+    }
+    .led {
+      width: 14px;
+      height: 14px;
+      border-radius: 999px;
+      border: 1px solid #34d399;
+      background: #065f46;
+      box-shadow: inset 0 0 6px rgba(0,0,0,0.4);
+    }
+    .btn.active .led {
+      background: #bef264;
+      border-color: #ecfccb;
+      box-shadow: 0 0 14px rgba(190,242,100,0.95);
+    }
+    .btn.blackout.active .led {
+      background: #fca5a5;
+      border-color: #fee2e2;
+      box-shadow: 0 0 14px rgba(252,165,165,0.95);
+    }
+    .label {
+      letter-spacing: 0.03em;
+      text-align: center;
+      line-height: 1.05;
+    }
+    .blackout-wrap .btn {
+      width: 100%;
+      min-height: 90px;
+    }
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 14px;
+      padding: 2px 2px 10px 2px;
+      border-bottom: 1px solid rgba(0,0,0,0.22);
+    }
+    .title {
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      color: #f4f4f5;
+      line-height: 1.1;
+    }
+    .ble-status {
+      appearance: none;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 5px 10px;
+      border-radius: 999px;
+      border: 1px solid #3f3f46;
+      background: #27272a;
+      color: #d4d4d8;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+    .ble-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 999px;
+      background: #71717a;
+      box-shadow: inset 0 0 4px rgba(0,0,0,0.35);
+    }
+    .ble-status.connected .ble-dot {
+      background: #86efac;
+      box-shadow: 0 0 10px rgba(134,239,172,0.9);
+    }
+    .ble-status.connecting .ble-dot {
+      background: #facc15;
+      box-shadow: 0 0 10px rgba(250,204,21,0.9);
+    }
+  </style>
+</head>
+<body>
+  <div class="panel">
+    <div class="topbar">
+      <div class="title">DR-Pro-Rack Remote</div>
+      <button class="ble-status" id="bleStatus" type="button" aria-label="Connexion BLE">
+        <span class="ble-dot"></span>
+        <span id="bleStatusText">BLE disconnected</span>
+      </button>
+    </div>
+
+    <div class="group">
+      <div class="memory-grid">
+        <button class="btn" type="button"><span class="led"></span><span class="label">1</span></button>
+        <button class="btn" type="button"><span class="led"></span><span class="label">2</span></button>
+        <button class="btn" type="button"><span class="led"></span><span class="label">3</span></button>
+        <button class="btn" type="button"><span class="led"></span><span class="label">4</span></button>
+        <button class="btn active" type="button"><span class="led"></span><span class="label">5</span></button>
+        <button class="btn" type="button"><span class="led"></span><span class="label">6</span></button>
+        <button class="btn" type="button"><span class="led"></span><span class="label">7</span></button>
+        <button class="btn" type="button"><span class="led"></span><span class="label">8</span></button>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="transport-grid">
+        <button class="btn active" type="button"><span class="led"></span><span class="label">PLAY</span></button>
+        <button class="btn" type="button"><span class="led"></span><span class="label">PAUSE</span></button>
+        <button class="btn" type="button"><span class="led"></span><span class="label">STOP</span></button>
+      </div>
+    </div>
+
+    <div class="group blackout-wrap">
+      <button class="btn blackout" type="button"><span class="led"></span><span class="label">BLACKOUT</span></button>
+    </div>
+  </div>
+  <script>
+    // REMPLACER ces UUID par ceux de ton MCU
+    const BLE_SERVICE_UUID = '19b10000-e8f2-537e-4f6c-d104768a1214';
+    const BLE_STATE_CHAR_UUID = '19b10001-e8f2-537e-4f6c-d104768a1214';
+
+    let state = {
+      memory: 5,
+      transport: 'PLAY',
+      blackout: false,
+      dmxAddr: 1
+    };
+
+    let bleDevice = null;
+    let gattServer = null;
+    let stateChar = null;
+    let isConnecting = false;
+
+    const memoryButtons = [...document.querySelectorAll('.memory-grid .btn')];
+    const transportButtons = [...document.querySelectorAll('.transport-grid .btn')];
+    const blackoutButton = document.querySelector('.blackout-wrap .btn');
+    const bleStatusBtn = document.getElementById('bleStatus');
+    const bleStatusText = document.getElementById('bleStatusText');
+
+    function setBleStatus(mode, text) {
+      bleStatusBtn.classList.remove('connected', 'connecting');
+      if (mode) bleStatusBtn.classList.add(mode);
+      bleStatusText.textContent = text;
+    }
+
+    function updateUI() {
+      memoryButtons.forEach((b, i) => {
+        b.classList.toggle('active', state.memory === i + 1);
+      });
+
+      transportButtons.forEach((b) => {
+        const label = b.innerText.trim();
+        b.classList.toggle('active', label === state.transport);
+      });
+
+      blackoutButton.classList.toggle('active', state.blackout);
+    }
+
+    function buildPayload() {
+      const memMap = [0, 4, 8, 12, 16, 20, 24, 28];
+      const playMap = { PAUSE: 0, PLAY: 80, STOP: 160 };
+      const blackoutVal = state.blackout ? 128 : 0;
+
+      const addrHi = (state.dmxAddr >> 8) & 0xff;
+      const addrLo = state.dmxAddr & 0xff;
+
+      return new Uint8Array([
+        addrHi,
+        addrLo,
+        memMap[state.memory - 1],
+        playMap[state.transport],
+        blackoutVal
+      ]);
+    }
+
+    function decodePayload(data) {
+      if (!data || data.length < 5) return null;
+
+      const memByte = data[2];
+      const transportByte = data[3];
+      const blackoutByte = data[4];
+
+      let memory = 8;
+      if (memByte <= 3) memory = 1;
+      else if (memByte <= 7) memory = 2;
+      else if (memByte <= 11) memory = 3;
+      else if (memByte <= 15) memory = 4;
+      else if (memByte <= 19) memory = 5;
+      else if (memByte <= 23) memory = 6;
+      else if (memByte <= 27) memory = 7;
+
+      let transport = 'PAUSE';
+      if (transportByte >= 160) transport = 'STOP';
+      else if (transportByte >= 80) transport = 'PLAY';
+
+      return {
+        memory,
+        transport,
+        blackout: blackoutByte >= 128,
+        dmxAddr: (data[0] << 8) | data[1]
+      };
+    }
+
+    function applyState(nextState) {
+      state = { ...state, ...nextState };
+      updateUI();
+    }
+
+    async function sendState() {
+      const payload = buildPayload();
+      console.log('BLE payload', payload);
+
+      if (!stateChar || !gattServer?.connected) {
+        console.log('BLE not connected, payload not sent');
+        return;
+      }
+
+      try {
+        if (stateChar.writeValueWithResponse) {
+          await stateChar.writeValueWithResponse(payload);
+        } else {
+          await stateChar.writeValue(payload);
+        }
+      } catch (err) {
+        console.error('BLE write failed', err);
+        setBleStatus('', 'BLE write error');
+      }
+    }
+
+    async function requestCurrentState() {
+      if (!stateChar) return;
+      try {
+        const value = await stateChar.readValue();
+        const bytes = new Uint8Array(value.buffer.slice(0, 5));
+        const decoded = decodePayload(bytes);
+        if (decoded) applyState(decoded);
+      } catch (err) {
+        console.warn('BLE read state failed', err);
+      }
+    }
+
+    function handleNotifications(event) {
+      const value = event.target.value;
+      const bytes = new Uint8Array(value.buffer.slice(0, 5));
+      console.log('BLE notify', bytes);
+      const decoded = decodePayload(bytes);
+      if (decoded) applyState(decoded);
+    }
+
+    function handleDisconnected() {
+      stateChar = null;
+      gattServer = null;
+      setBleStatus('', 'BLE disconnected');
+    }
+
+    async function connectBle() {
+      if (isConnecting) return;
+      isConnecting = true;
+      setBleStatus('connecting', 'BLE connecting...');
+
+      try {
+        bleDevice = await navigator.bluetooth.requestDevice({
+          filters: [
+            { namePrefix: 'DRProRack' },
+            { services: [BLE_SERVICE_UUID] }
+          ],
+        });
+
+        bleDevice.addEventListener('gattserverdisconnected', handleDisconnected);
+        gattServer = await bleDevice.gatt.connect();
+        const service = await gattServer.getPrimaryService(BLE_SERVICE_UUID);
+        stateChar = await service.getCharacteristic(BLE_STATE_CHAR_UUID);
+
+        try {
+          await stateChar.startNotifications();
+          stateChar.addEventListener('characteristicvaluechanged', handleNotifications);
+        } catch (err) {
+          console.warn('Notifications unavailable', err);
+        }
+
+        setBleStatus('connected', 'BLE connected');
+        await requestCurrentState();
+      } catch (err) {
+        console.error('BLE connect failed', err);
+        setBleStatus('', 'BLE disconnected');
+      } finally {
+        isConnecting = false;
+      }
+    }
+
+    async function toggleBleConnection() {
+      if (!navigator.bluetooth) {
+        setBleStatus('', 'BLE unsupported');
+        alert('Web Bluetooth non supporté dans ce navigateur/appareil. Utilise Chrome ou Edge en HTTPS.');
+        return;
+      }
+
+      if (gattServer?.connected && bleDevice?.gatt?.connected) {
+        bleDevice.gatt.disconnect();
+        return;
+      }
+
+      await connectBle();
+    }
+
+    memoryButtons.forEach((b, i) => {
+      b.addEventListener('click', async () => {
+        applyState({ memory: i + 1 });
+        await sendState();
+      });
+    });
+
+    transportButtons.forEach((b) => {
+      b.addEventListener('click', async () => {
+        applyState({ transport: b.innerText.trim() });
+        await sendState();
+      });
+    });
+
+    blackoutButton.addEventListener('click', async () => {
+      applyState({ blackout: !state.blackout });
+      await sendState();
+    });
+
+    bleStatusBtn.addEventListener('click', toggleBleConnection);
+
+    window.applyMcuState = function(mem, transport, blackout) {
+      applyState({ memory: mem, transport, blackout });
+    };
+
+    updateUI();
+  </script>
+</body>
+</html>
