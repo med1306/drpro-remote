@@ -197,7 +197,6 @@
     </div>
   </div>
   <script>
-    // REMPLACER ces UUID par ceux de ton MCU
     const BLE_SERVICE_UUID = '19b10000-e8f2-537e-4f6c-d104768a1214';
     const BLE_STATE_CHAR_UUID = '19b10001-e8f2-537e-4f6c-d104768a1214';
 
@@ -212,6 +211,9 @@
     let gattServer = null;
     let stateChar = null;
     let isConnecting = false;
+    let manualDisconnect = false;
+    let reconnectTimer = null;
+    let notificationsBound = false;
 
     const memoryButtons = [...document.querySelectorAll('.memory-grid .btn')];
     const transportButtons = [...document.querySelectorAll('.transport-grid .btn')];
@@ -311,6 +313,7 @@
 
     async function requestCurrentState() {
       if (!stateChar) return;
+
       try {
         const value = await stateChar.readValue();
         const bytes = new Uint8Array(value.buffer.slice(0, 5));
@@ -325,48 +328,151 @@
       const value = event.target.value;
       const bytes = new Uint8Array(value.buffer.slice(0, 5));
       console.log('BLE notify', bytes);
+
       const decoded = decodePayload(bytes);
       if (decoded) applyState(decoded);
     }
 
-    function handleDisconnected() {
+    function clearBleRefs() {
       stateChar = null;
       gattServer = null;
-      setBleStatus('', 'BLE disconnected');
+      notificationsBound = false;
     }
 
-    async function connectBle() {
-      if (isConnecting) return;
+    function scheduleReconnect(delay = 1500) {
+      if (manualDisconnect) return;
+      if (!navigator.bluetooth?.getDevices) return;
+
+      clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(() => {
+        autoReconnectBle();
+      }, delay);
+    }
+
+    function handleDisconnected() {
+      console.log('BLE disconnected');
+      clearBleRefs();
+      setBleStatus('', 'BLE disconnected');
+      scheduleReconnect(1500);
+    }
+
+    async function bindStateCharacteristic() {
+      const service = await gattServer.getPrimaryService(BLE_SERVICE_UUID);
+      stateChar = await service.getCharacteristic(BLE_STATE_CHAR_UUID);
+
+      try {
+        await stateChar.startNotifications();
+
+        if (!notificationsBound) {
+          stateChar.addEventListener('characteristicvaluechanged', handleNotifications);
+          notificationsBound = true;
+        }
+      } catch (err) {
+        console.warn('Notifications unavailable', err);
+      }
+
+      setBleStatus('connected', 'BLE connected');
+      await requestCurrentState();
+    }
+
+    async function connectToDevice(device) {
+      if (!device) return false;
+      if (isConnecting) return false;
+
       isConnecting = true;
       setBleStatus('connecting', 'BLE connecting...');
 
       try {
-        bleDevice = await navigator.bluetooth.requestDevice({
+        bleDevice = device;
+
+        bleDevice.removeEventListener('gattserverdisconnected', handleDisconnected);
+        bleDevice.addEventListener('gattserverdisconnected', handleDisconnected);
+
+        gattServer = await bleDevice.gatt.connect();
+        await bindStateCharacteristic();
+
+        console.log('BLE connected to', bleDevice.name || '(unnamed)');
+        return true;
+      } catch (err) {
+        console.error('BLE connect failed', err);
+        clearBleRefs();
+        setBleStatus('', 'BLE disconnected');
+        return false;
+      } finally {
+        isConnecting = false;
+      }
+    }
+
+    async function connectBle() {
+      if (!navigator.bluetooth) {
+        setBleStatus('', 'BLE unsupported');
+        alert('Web Bluetooth non supporté dans ce navigateur/appareil. Utilise Chrome ou Edge en HTTPS.');
+        return;
+      }
+
+      manualDisconnect = false;
+
+      try {
+        const device = await navigator.bluetooth.requestDevice({
           filters: [
-            { namePrefix: 'DRProRack' },
+            { namePrefix: 'DMXbox' },
             { services: [BLE_SERVICE_UUID] }
           ],
         });
 
-        bleDevice.addEventListener('gattserverdisconnected', handleDisconnected);
-        gattServer = await bleDevice.gatt.connect();
-        const service = await gattServer.getPrimaryService(BLE_SERVICE_UUID);
-        stateChar = await service.getCharacteristic(BLE_STATE_CHAR_UUID);
+        await connectToDevice(device);
+      } catch (err) {
+        console.error('BLE request/connect failed', err);
+        setBleStatus('', 'BLE disconnected');
+      }
+    }
 
-        try {
-          await stateChar.startNotifications();
-          stateChar.addEventListener('characteristicvaluechanged', handleNotifications);
-        } catch (err) {
-          console.warn('Notifications unavailable', err);
+    async function autoReconnectBle() {
+      console.log('autoReconnectBle() called');
+
+      if (manualDisconnect) {
+        console.log('auto reconnect blocked: manualDisconnect');
+        return false;
+      }
+
+      if (!navigator.bluetooth?.getDevices) {
+        console.log('auto reconnect unavailable: getDevices not supported');
+        return false;
+      }
+
+      if (gattServer?.connected && bleDevice?.gatt?.connected) {
+        console.log('already connected');
+        return true;
+      }
+
+      if (isConnecting) {
+        console.log('auto reconnect blocked: already connecting');
+        return false;
+      }
+
+      try {
+        const devices = await navigator.bluetooth.getDevices();
+
+        console.log('authorized devices:', devices.map(d => ({
+          name: d.name,
+          id: d.id
+        })));
+
+        const device = devices.find(d =>
+          d.name === 'DMXbox' ||
+          d.name?.startsWith('DMXbox')
+        );
+
+        if (!device) {
+          console.log('No previously authorized DMXbox BLE device');
+          return false;
         }
 
-        setBleStatus('connected', 'BLE connected');
-        await requestCurrentState();
+        console.log('Attempting BLE auto reconnect to', device.name);
+        return await connectToDevice(device);
       } catch (err) {
-        console.error('BLE connect failed', err);
-        setBleStatus('', 'BLE disconnected');
-      } finally {
-        isConnecting = false;
+        console.warn('BLE auto reconnect failed', err);
+        return false;
       }
     }
 
@@ -378,10 +484,15 @@
       }
 
       if (gattServer?.connected && bleDevice?.gatt?.connected) {
+        manualDisconnect = true;
+        clearTimeout(reconnectTimer);
         bleDevice.gatt.disconnect();
+        clearBleRefs();
+        setBleStatus('', 'BLE disconnected');
         return;
       }
 
+      manualDisconnect = false;
       await connectBle();
     }
 
@@ -410,7 +521,28 @@
       applyState({ memory: mem, transport, blackout });
     };
 
+    window.addEventListener('load', () => {
+      setTimeout(() => {
+        autoReconnectBle();
+      }, 400);
+    });
+
+    window.addEventListener('pageshow', () => {
+      scheduleReconnect(300);
+    });
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        scheduleReconnect(300);
+      }
+    });
+
+    window.addEventListener('focus', () => {
+      scheduleReconnect(300);
+    });
+
     updateUI();
   </script>
 </body>
 </html>
+
